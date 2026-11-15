@@ -1,0 +1,138 @@
+name: Train, gate, and upload model to GCS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * *' # daily at midnight UTC
+  workflow_dispatch:
+    inputs:
+      n_estimators:
+        description: 'Number of boosting stages'
+        default: '100'
+      learning_rate:
+        description: 'Learning rate'
+        default: '0.1'
+      max_depth:
+        description: 'Max depth of each tree'
+        default: '3'
+      min_accuracy:
+        description: 'Quality gate: minimum accuracy'
+        default: '0.90'
+      min_recall:
+        description: 'Quality gate: minimum recall on malignant class'
+        default: '0.85'
+
+env:
+  # Manual-run inputs, falling back to defaults on push / PR / schedule runs
+  N_ESTIMATORS: ${{ inputs.n_estimators || '100' }}
+  LEARNING_RATE: ${{ inputs.learning_rate || '0.1' }}
+  MAX_DEPTH: ${{ inputs.max_depth || '3' }}
+  MIN_ACCURACY: ${{ inputs.min_accuracy || '0.90' }}
+  MIN_RECALL: ${{ inputs.min_recall || '0.85' }}
+
+jobs:
+  # ---------- Job 1: tests must pass before anything trains ----------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Get cache dir
+        id: pip-cache-dir
+        run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache-dir.outputs.dir }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest -v
+
+  # ---------- Job 2: train + quality gate (no cloud access) ----------
+  train:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Get cache dir
+        id: pip-cache-dir
+        run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache-dir.outputs.dir }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Exits with code 1 if accuracy or recall is below threshold -> pipeline stops here
+      - name: Train, evaluate, and apply quality gate
+        run: python train_and_save_model.py --output-dir artifacts
+
+      # Hand the trained model to the upload job
+      - name: Save model as run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ github.run_id }}
+          path: artifacts/
+
+  # ---------- Job 3: upload to GCS (only job with the GCP key) ----------
+  upload:
+    needs: train
+    # Never upload from pull requests
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download model artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: model-${{ github.run_id }}
+          path: artifacts
+
+      - name: Authenticate with GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload versioned model and update latest
+        env:
+          BUCKET: ${{ vars.GCS_BUCKET_NAME }}
+        run: |
+          VERSION="${GITHUB_SHA::7}-run${GITHUB_RUN_NUMBER}"
+          gcloud storage cp artifacts/model.joblib artifacts/metrics.json "gs://${BUCKET}/models/${VERSION}/"
+          gcloud storage cp artifacts/model.joblib artifacts/metrics.json "gs://${BUCKET}/models/latest/"
+          echo "✅ Uploaded to gs://${BUCKET}/models/${VERSION}/ and gs://${BUCKET}/models/latest/"
