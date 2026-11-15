@@ -372,6 +372,17 @@ Open a pull request into `main`. `test` and `train` run so you can see whether t
 └── README.md
 ```
 
+### Results from our runs
+
+**Successful run:** all three jobs passed and the model was uploaded to GCS.
+
+![Successful pipeline run](docs/successful-run.png)
+
+**Gate-blocked run:** weak settings (`n_estimators=10`, `learning_rate=0.01`, `max_depth=1`) failed the quality gate, so the artifact and upload steps were skipped.
+
+![Quality gate blocking a bad model](docs/gate-blocked-run.png)
+
+
 ### What the tests check
 
 | Test | Checks |
