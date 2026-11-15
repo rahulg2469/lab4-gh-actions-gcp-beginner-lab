@@ -25,14 +25,6 @@ on:
         description: 'Quality gate: minimum recall on malignant class'
         default: '0.85'
 
-env:
-  # Manual-run inputs, falling back to defaults on push / PR / schedule runs
-  N_ESTIMATORS: ${{ inputs.n_estimators || '100' }}
-  LEARNING_RATE: ${{ inputs.learning_rate || '0.1' }}
-  MAX_DEPTH: ${{ inputs.max_depth || '3' }}
-  MIN_ACCURACY: ${{ inputs.min_accuracy || '0.90' }}
-  MIN_RECALL: ${{ inputs.min_recall || '0.85' }}
-
 jobs:
   # ---------- Job 1: tests must pass before anything trains ----------
   test:
@@ -70,6 +62,14 @@ jobs:
   train:
     needs: test
     runs-on: ubuntu-latest
+    # Manual-run inputs, falling back to defaults on push / PR / schedule runs.
+    # Scoped to this job only so they never leak into the test job.
+    env:
+      N_ESTIMATORS: ${{ inputs.n_estimators || '100' }}
+      LEARNING_RATE: ${{ inputs.learning_rate || '0.1' }}
+      MAX_DEPTH: ${{ inputs.max_depth || '3' }}
+      MIN_ACCURACY: ${{ inputs.min_accuracy || '0.90' }}
+      MIN_RECALL: ${{ inputs.min_recall || '0.85' }}
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4

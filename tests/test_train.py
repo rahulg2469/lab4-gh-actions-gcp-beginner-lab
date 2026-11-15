@@ -37,7 +37,9 @@ def test_gate_checks_both_metrics():
 
 
 def test_main_writes_artifacts(tmp_path):
-    code = t.main(["--n-estimators", "20", "--min-accuracy", "0.5", "--min-recall", "0.5",
+    # Pass every hyperparameter explicitly so env vars can't change the result
+    code = t.main(["--n-estimators", "20", "--learning-rate", "0.1", "--max-depth", "3",
+                   "--min-accuracy", "0.5", "--min-recall", "0.5",
                    "--output-dir", str(tmp_path)])
     assert code == 0
     assert (tmp_path / "model.joblib").exists()
